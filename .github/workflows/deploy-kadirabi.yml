@@ -85,7 +85,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: kadirabi-dist
-          path: dist
+          path: .
 
       - name: Fail-closed FTP preflight
         env:
@@ -94,6 +94,14 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: |
           set -euo pipefail
+          # upload-artifact path: dist/ → download to . restores dist/index.html (not dist/dist/)
+          if [ -f dist/dist/index.html ] && [ ! -f dist/index.html ]; then
+            echo "Normalizing nested artifact dist/dist → dist/"
+            shopt -s dotglob
+            mv dist/dist/* dist/
+            rmdir dist/dist
+          fi
+          ls -la dist || true
           ok=1
           for n in FTP_SERVER FTP_USERNAME FTP_PASSWORD FTP_REMOTE_DIR; do
             v="${!n}"
