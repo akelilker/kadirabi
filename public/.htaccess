@@ -1,0 +1,13 @@
+# SPA fallback scoped to /kadirabi/ only — does not rewrite domain root.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /kadirabi/
+
+  RewriteRule ^index\.html$ - [L]
+
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  RewriteRule ^ index.html [L]
+</IfModule>
