@@ -46,23 +46,17 @@ npm run build
 → dist/
 ```
 
-### Canonical architecture
+### Canonical architecture (otomatik)
 
 ```text
 GitHub
   → push main
-  → CI validation only (.github/workflows/deploy-kadirabi.yml)
-
-cPanel Git Version Control
-  → Update from Remote
-  → Deploy HEAD Commit
-  → .cpanel.yml
-  → node/npm + npm ci/test/typecheck/build/verify
-  → copy dist/ only
-  → /home/karmotor/public_html/kadirabi
+  → Validate (test / typecheck / build / verify)
+  → FTP sync ./dist/ only
+  → public_html/kadirabi/
 ```
 
-### GitHub Actions (CI only)
+### GitHub Actions (auto deploy)
 
 Workflow:
 
@@ -70,12 +64,17 @@ Workflow:
 .github/workflows/deploy-kadirabi.yml
 ```
 
-- `push` to `main` → validation only (`npm ci`, test, typecheck, build, `verify:deploy`)
-- `workflow_dispatch` → same validation only
-- **No FTP upload**
-- **No production mutation from GitHub Actions**
+- `push` to `main` → validate + FTP deploy
+- `workflow_dispatch` → aynı akış (manuel tetik)
+- Upload kaynağı yalnızca `./dist/`
+- `dangerous-clean-slate: false`
 
-### cPanel Git deploy
+Gerekli Actions secrets / variables:
+
+- `FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD`
+- `FTP_REMOTE_DIR` (sonda `/`; örn. `public_html/kadirabi/` veya `kadirabi/` veya dedicated hesap için `./`)
+
+### cPanel Git (opsiyonel fallback)
 
 Owner file:
 
@@ -83,25 +82,18 @@ Owner file:
 .cpanel.yml
 ```
 
-Requirements:
+Rutin deploy için gerekli değil. Node/npm olan sunucuda manuel Pull ile de yayınlanabilir; yalnızca `dist/` kopyalanır.
 
-- cPanel deploy shell must provide **Node.js** and **npm** (Vite build runs on the server during Deploy HEAD Commit)
-- If `node`/`npm` is missing, deploy fails **before** touching `public_html/kadirabi`
-- Only `dist/` contents are copied to the live folder
-- Repository root / `src/` / `node_modules` are never published
-- No `rm -rf` / destructive sync of the live tree on deploy
-
-Apache SPA fallback ships in the artifact:
+Apache SPA fallback artifact içinde gelir:
 
 ```text
 public/.htaccess → dist/.htaccess (RewriteBase /kadirabi/)
 ```
 
-Domain root `.htaccess` and sibling apps under `public_html/` are not modified.
+Domain root `.htaccess` ve `public_html/` kardeş uygulamalar değiştirilmez.
 
-Credential values are not documented here.
+Credential değerleri burada belgelenmez.
 
 ## Notlar
 
 - İstemci verisi IndexedDB’de tutulur (`kadirabi-taksit-alacak-v1`). Route/path değişince kaybolmaz.
-- Canlı cPanel Deploy yalnızca açık kullanıcı onayı ile çalıştırılmalıdır.

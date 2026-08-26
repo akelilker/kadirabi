@@ -1,5 +1,6 @@
 ---
-# Production deploy owner: cPanel Git Version Control
+# Optional / fallback deploy: cPanel Git Version Control
+# Primary auto deploy: GitHub Actions FTP (.github/workflows/deploy-kadirabi.yml)
 # Target: https://karmotors.com.tr/kadirabi/
 #
 # Fail-closed:

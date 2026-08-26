@@ -3,8 +3,8 @@
  * Deploy architecture + artifact invariants for /kadirabi/.
  * Fail-closed: exits non-zero if owners or dist are not production-ready.
  *
- * Canonical production owner: cPanel Git Version Control + .cpanel.yml
- * GitHub Actions: CI validation only (no production mutation).
+ * Canonical auto deploy: GitHub Actions → FTP sync of dist/ only
+ * Optional fallback: cPanel Git Version Control + .cpanel.yml
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -113,7 +113,6 @@ if (existsSync(CPANEL)) {
   }
 
   if (/public_html(?!\/kadirabi)/.test(cpanel.replaceAll(DEPLOYPATH, ''))) {
-    // After removing exact DEPLOYPATH occurrences, residual public_html refs are suspicious
     const stripped = cpanel.split(DEPLOYPATH).join('')
     if (/\/home\/karmotor\/public_html(?!\/kadirabi)/.test(stripped) || /public_html\s*$/m.test(stripped)) {
       fail('.cpanel.yml must not target public_html root or non-kadirabi paths')
@@ -124,12 +123,28 @@ if (existsSync(CPANEL)) {
 if (existsSync(WORKFLOW)) {
   const wf = readFileSync(WORKFLOW, 'utf8')
 
-  if (/FTP-Deploy-Action|SamKirkland\/FTP-Deploy-Action/.test(wf)) {
-    fail('GitHub Actions must not contain FTP-Deploy-Action (CI-only)')
+  if (!/SamKirkland\/FTP-Deploy-Action@/.test(wf)) {
+    fail('GitHub Actions must use SamKirkland/FTP-Deploy-Action for auto deploy')
   }
 
-  if (/FTP_SERVER|FTP_USERNAME|FTP_PASSWORD|FTP_REMOTE_DIR|server-dir:|local-dir:/.test(wf)) {
-    fail('GitHub Actions must not contain FTP deploy configuration')
+  if (!wf.includes('local-dir: ./dist/')) {
+    fail('FTP deploy must upload ONLY ./dist/')
+  }
+
+  if (!/dangerous-clean-slate:\s*false/.test(wf)) {
+    fail('FTP deploy must keep dangerous-clean-slate: false')
+  }
+
+  if (/dangerous-clean-slate:\s*true/.test(wf)) {
+    fail('FTP deploy must not enable dangerous-clean-slate')
+  }
+
+  if (!wf.includes('FTP_SERVER') || !wf.includes('FTP_USERNAME') || !wf.includes('FTP_PASSWORD')) {
+    fail('FTP deploy must reference FTP_SERVER / FTP_USERNAME / FTP_PASSWORD secrets')
+  }
+
+  if (!wf.includes('FTP_REMOTE_DIR')) {
+    fail('FTP deploy must require FTP_REMOTE_DIR')
   }
 
   if (!/npm (ci|test)/.test(wf) || !wf.includes('npm run typecheck') || !wf.includes('npm run build')) {
@@ -140,9 +155,9 @@ if (existsSync(WORKFLOW)) {
     fail('CI workflow must run verify:deploy')
   }
 
-  // Production mutation markers must stay out of Actions
-  if (/public_html\/kadirabi|\/home\/karmotor\/public_html/.test(wf)) {
-    fail('CI workflow must not reference production filesystem paths')
+  // Hard filesystem paths belong in .cpanel.yml, not Actions FTP config
+  if (/\/home\/karmotor\/public_html/.test(wf)) {
+    fail('CI workflow must not hardcode /home/karmotor/public_html paths')
   }
 }
 
@@ -156,6 +171,6 @@ console.log('verify:deploy PASS')
 console.log(` PRODUCTION_BASE_PATH = ${BASE}`)
 console.log(' BUILD_OUTPUT = dist/')
 console.log(` CPANEL_DEPLOYPATH = ${DEPLOYPATH}`)
-console.log(' DEPLOY_OWNER = CPANEL_GIT')
-console.log(' GITHUB_ACTIONS_ROLE = CI_ONLY')
+console.log(' DEPLOY_OWNER = GITHUB_ACTIONS_FTP')
+console.log(' CPANEL_GIT_ROLE = FALLBACK')
 console.log(' APACHE_FALLBACK = READY')
