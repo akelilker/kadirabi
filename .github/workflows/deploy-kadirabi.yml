@@ -16,7 +16,7 @@
 # - Upload source is ./dist/ only (never repo root / src / node_modules).
 # - dangerous-clean-slate remains false (no wipe of sibling paths).
 # - FTP_REMOTE_DIR must end with / and must not target public_html root.
-# - cPanel Git + .cpanel.yml remains a manual fallback, not required for routine deploys.
+# - Deploy job builds dist locally (no cross-job artifact path issues).
 
 name: Deploy kadirabi
 
@@ -38,7 +38,7 @@ env:
 
 jobs:
   validate:
-    name: Validate (test / typecheck / build / artifact)
+    name: Validate (test / typecheck / build)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -66,14 +66,6 @@ jobs:
       - name: Validate deploy artifact + owners
         run: npm run verify:deploy
 
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kadirabi-dist
-          path: dist/
-          if-no-files-found: error
-          retention-days: 3
-
   deploy:
     name: FTP deploy (auto on main)
     needs: validate
@@ -81,11 +73,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Download dist artifact
-        uses: actions/download-artifact@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          name: kadirabi-dist
-          path: .
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production build
+        run: npm run build
+
+      - name: Validate dist before FTP
+        run: npm run verify:deploy
 
       - name: Fail-closed FTP preflight
         env:
@@ -94,14 +98,6 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          # upload-artifact path: dist/ → download to . restores dist/index.html (not dist/dist/)
-          if [ -f dist/dist/index.html ] && [ ! -f dist/index.html ]; then
-            echo "Normalizing nested artifact dist/dist → dist/"
-            shopt -s dotglob
-            mv dist/dist/* dist/
-            rmdir dist/dist
-          fi
-          ls -la dist || true
           ok=1
           for n in FTP_SERVER FTP_USERNAME FTP_PASSWORD FTP_REMOTE_DIR; do
             v="${!n}"
@@ -118,7 +114,6 @@ jobs:
             echo "::error::FTP_REMOTE_DIR sonda / ile bitmeli (örn. public_html/kadirabi/ veya kadirabi/ veya ./)."
             ok=0
           fi
-          # Domain root / public_html root yasak — yalnızca kadirabi hedefi
           case "${FTP_REMOTE_DIR:-}" in
             /|public_html/|public_html)
               echo "::error::FTP_REMOTE_DIR domain veya public_html kökünü hedefleyemez. kadirabi alt klasörü kullanın."
@@ -155,13 +150,15 @@ jobs:
               ;;
           esac
           if [ ! -f dist/index.html ] || [ ! -d dist/assets ] || [ ! -f dist/.htaccess ]; then
-            echo "::error::dist/ artifact eksik (index.html, assets/, .htaccess gerekli)."
+            echo "::error::dist/ eksik (index.html, assets/, .htaccess gerekli)."
+            ls -la dist || true
             ok=0
           fi
           [ "$ok" -eq 1 ] || exit 1
           echo "FTP_REMOTE_DIR configured=yes length=${#FTP_REMOTE_DIR}"
           echo "FTP connection mode: protocol=$FTP_PROTOCOL port=$FTP_PORT security=$FTP_SECURITY"
           echo "Deploy source: ./dist/ | dangerous-clean-slate: false"
+          ls -la dist
 
       - name: FTP sync dist/
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
