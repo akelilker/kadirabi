@@ -1,0 +1,42 @@
+{
+  "id": "/kadirabi/",
+  "name": "Taksit & Alacak Hesaplayıcı",
+  "short_name": "Taksit Alacak",
+  "description": "Taksitli satış alacak ve para maliyeti hesaplayıcı",
+  "start_url": "/kadirabi/",
+  "scope": "/kadirabi/",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "tr",
+  "dir": "ltr",
+  "categories": ["business", "finance", "productivity"],
+  "prefer_related_applications": false,
+  "theme_color": "#1c1915",
+  "background_color": "#1c1915",
+  "icons": [
+    {
+      "src": "/kadirabi/icons/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kadirabi/icons/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kadirabi/icons/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/kadirabi/icons/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

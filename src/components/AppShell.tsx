@@ -1,7 +1,10 @@
 import { Link, NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useAppData } from '../app/AppDataContext'
+import { getAppPublicPath } from '../config/public-base'
 import { todayIstanbul } from '../domain/dates'
+
+const brandLogoSrc = `${getAppPublicPath()}/icons/pwa-192.png`
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { asOfDate, setAsOfDate, resetAsOfToToday } = useAppData()
@@ -11,7 +14,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <aside className="sidebar">
         <Link to="/" className="brand">
-          <span className="brand-mark">TA</span>
+          <img
+            className="brand-mark"
+            src={brandLogoSrc}
+            alt=""
+            width={40}
+            height={40}
+            decoding="async"
+          />
           <span className="brand-text">
             Taksit Alacak
             <small>Para Maliyeti Hesaplayıcı</small>
