@@ -1,0 +1,35 @@
+---
+# Production deploy owner: cPanel Git Version Control
+# Target: https://karmotors.com.tr/kadirabi/
+#
+# Fail-closed:
+# - Node/npm must exist BEFORE any public_html mutation
+# - Build/test/verify must PASS before copy
+# - Copy ONLY dist/ into /home/karmotor/public_html/kadirabi
+# - Never copy repository root; never touch public_html root / siblings
+#
+# Note: each compound task re-sets DEPLOYPATH so env is not assumed across lines.
+
+deployment:
+  tasks:
+    # A–B. Exact path gate + never deploy from live folder
+    - export DEPLOYPATH=/home/karmotor/public_html/kadirabi && /bin/test "$DEPLOYPATH" = "/home/karmotor/public_html/kadirabi" && /bin/test "$(/bin/pwd -P)" != "$DEPLOYPATH"
+
+    # C. Runtime required for Vite build — fail before live mutation
+    - command -v node
+    - command -v npm
+
+    # D. Install / test / build in repository checkout
+    - npm ci
+    - npm test
+    - npm run typecheck
+    - npm run build
+    - npm run verify:deploy
+
+    # E. Artifact gates (explicit, even if verify:deploy already covers them)
+    - /bin/test -f dist/index.html
+    - /bin/test -f dist/.htaccess
+    - /bin/test -d dist/assets
+
+    # F–G. Only after gates PASS: create target (if needed) and copy dist only
+    - export DEPLOYPATH=/home/karmotor/public_html/kadirabi && /bin/test "$DEPLOYPATH" = "/home/karmotor/public_html/kadirabi" && /bin/mkdir -p "$DEPLOYPATH" && /bin/test ! -e "$DEPLOYPATH/.git" && /bin/cp -a dist/. "$DEPLOYPATH/"

@@ -33,6 +33,12 @@ Vite base:
 /kadirabi/
 ```
 
+Expected web directory:
+
+```text
+/home/karmotor/public_html/kadirabi
+```
+
 Build / artifact:
 
 ```text
@@ -40,65 +46,62 @@ npm run build
 → dist/
 ```
 
+### Canonical architecture
+
+```text
+GitHub
+  → push main
+  → CI validation only (.github/workflows/deploy-kadirabi.yml)
+
+cPanel Git Version Control
+  → Update from Remote
+  → Deploy HEAD Commit
+  → .cpanel.yml
+  → node/npm + npm ci/test/typecheck/build/verify
+  → copy dist/ only
+  → /home/karmotor/public_html/kadirabi
+```
+
+### GitHub Actions (CI only)
+
 Workflow:
 
 ```text
 .github/workflows/deploy-kadirabi.yml
 ```
 
-### Trigger safety
+- `push` to `main` → validation only (`npm ci`, test, typecheck, build, `verify:deploy`)
+- `workflow_dispatch` → same validation only
+- **No FTP upload**
+- **No production mutation from GitHub Actions**
 
-- `push` to `main` → validation CI only (test / typecheck / build / verify:deploy)
-- Production FTP upload → **manual** `workflow_dispatch` only
-- First application push must not mutate production FTP
+### cPanel Git deploy
 
-### FTP credentials
-
-Required secrets:
-
-- `FTP_SERVER`
-- `FTP_USERNAME`
-- `FTP_PASSWORD`
-
-Required secret **or** repository variable:
-
-- `FTP_REMOTE_DIR` — FTP account root’una göre hedef klasör; **sonda `/` zorunlu**
-
-Optional repository variables (Karmotors sibling defaults):
-
-- `FTP_PROTOCOL` — default `ftps`
-- `FTP_PORT` — default `21`
-- `FTP_SECURITY` — default `loose`
-
-`FTP_REMOTE_DIR` hard-coded değildir. Sunucu / FTP hesabı köküne göre ayarlanmalıdır.
-
-Typical examples:
+Owner file:
 
 ```text
-public_html/kadirabi/
+.cpanel.yml
 ```
 
-FTP root already `public_html`:
+Requirements:
+
+- cPanel deploy shell must provide **Node.js** and **npm** (Vite build runs on the server during Deploy HEAD Commit)
+- If `node`/`npm` is missing, deploy fails **before** touching `public_html/kadirabi`
+- Only `dist/` contents are copied to the live folder
+- Repository root / `src/` / `node_modules` are never published
+- No `rm -rf` / destructive sync of the live tree on deploy
+
+Apache SPA fallback ships in the artifact:
 
 ```text
-kadirabi/
+public/.htaccess → dist/.htaccess (RewriteBase /kadirabi/)
 ```
 
-Dedicated FTP rooted directly at the app directory:
+Domain root `.htaccess` and sibling apps under `public_html/` are not modified.
 
-```text
-./
-```
-
-Gerçek değer production öncesi cPanel/FTP account configuration ile doğrulanmalıdır. Boş `FTP_REMOTE_DIR` ile deploy fail-closed reddedilir (FTP root’a yazılmaz).
-
-Upload yalnızca `./dist/` içeriğini `FTP_REMOTE_DIR` altına gönderir. `dangerous-clean-slate: false`. Domain root ve kardeş uygulamalar dokunulmaz.
-
-Apache SPA fallback: `public/.htaccess` → build ile `dist/.htaccess` (`RewriteBase /kadirabi/`).
-
-Credential değerleri bu dosyada yoktur.
+Credential values are not documented here.
 
 ## Notlar
 
 - İstemci verisi IndexedDB’de tutulur (`kadirabi-taksit-alacak-v1`). Route/path değişince kaybolmaz.
-- Canlı FTP/deploy bu depoda kullanıcı onayı olmadan çalıştırılmamalıdır.
+- Canlı cPanel Deploy yalnızca açık kullanıcı onayı ile çalıştırılmalıdır.

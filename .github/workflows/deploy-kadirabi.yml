@@ -1,27 +1,14 @@
-# Deploy kadirabi (Vite) to cPanel via FTP
-#
-# Credentials (Settings → Secrets and variables → Actions):
-#   Secrets (required): FTP_SERVER, FTP_USERNAME, FTP_PASSWORD
-#   Secret or Variable (required): FTP_REMOTE_DIR — FTP account root'una göre, sonda / zorunlu
-#     Typical: public_html/kadirabi/
-#     FTP root already public_html: kadirabi/
-#     Dedicated FTP rooted at kadirabi: ./
-#
-# Optional repository variables (defaults match Karmotors siblings):
-#   FTP_PROTOCOL — default ftps (ftp | ftps | ftps-legacy)
-#   FTP_PORT — default 21
-#   FTP_SECURITY — default loose (strict | loose)
+# CI validation only — production deploy owner is cPanel Git + .cpanel.yml
 #
 # Safety:
-# - Production FTP upload runs ONLY on workflow_dispatch (manual).
-# - push to main may run validation CI, but never uploads to FTP.
-# - Upload source is ./dist/ only (never repo root / src / node_modules).
-# - dangerous-clean-slate remains false.
+# - push@main and workflow_dispatch run validation only
+# - no FTP upload
+# - no production mutation from GitHub Actions
 
-name: Deploy kadirabi
+name: Validate kadirabi
 
 concurrency:
-  group: deploy-kadirabi
+  group: validate-kadirabi
   cancel-in-progress: false
 
 on:
@@ -29,12 +16,6 @@ on:
     branches:
       - main
   workflow_dispatch:
-
-env:
-  FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR || vars.FTP_REMOTE_DIR }}
-  FTP_PROTOCOL: ${{ vars.FTP_PROTOCOL || 'ftps' }}
-  FTP_PORT: ${{ vars.FTP_PORT || '21' }}
-  FTP_SECURITY: ${{ vars.FTP_SECURITY || 'loose' }}
 
 jobs:
   validate:
@@ -63,97 +44,5 @@ jobs:
       - name: Production build
         run: npm run build
 
-      - name: Validate deploy artifact + workflow invariants
+      - name: Validate deploy artifact + owners
         run: npm run verify:deploy
-
-  deploy:
-    name: FTP deploy (manual only)
-    needs: validate
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Production build
-        run: npm run build
-
-      - name: Validate deploy artifact + workflow invariants
-        run: npm run verify:deploy
-
-      - name: Fail-closed FTP preflight
-        env:
-          FTP_SERVER: ${{ secrets.FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: |
-          set -euo pipefail
-          ok=1
-          for n in FTP_SERVER FTP_USERNAME FTP_PASSWORD FTP_REMOTE_DIR; do
-            v="${!n}"
-            if [ -z "${v:-}" ]; then
-              if [ "$n" = "FTP_REMOTE_DIR" ]; then
-                echo "::error::$n boş. Actions → Secrets veya Variables'ta FTP_REMOTE_DIR ekleyin (sonda / zorunlu)."
-              else
-                echo "::error::$n tanımlı değil veya boş. Settings → Secrets and variables → Actions → Secrets."
-              fi
-              ok=0
-            fi
-          done
-          if [ -n "${FTP_REMOTE_DIR:-}" ] && [ "${FTP_REMOTE_DIR%/}" = "$FTP_REMOTE_DIR" ]; then
-            echo "::error::FTP_REMOTE_DIR sonda / ile bitmeli (örn. public_html/kadirabi/ veya kadirabi/ veya ./)."
-            ok=0
-          fi
-          case "$FTP_PROTOCOL" in
-            ftp|ftps|ftps-legacy) ;;
-            *)
-              echo "::error::FTP_PROTOCOL geçersiz. İzin verilen: ftp, ftps, ftps-legacy."
-              ok=0
-              ;;
-          esac
-          case "$FTP_PORT" in
-            ''|*[!0-9]*)
-              echo "::error::FTP_PORT sayısal olmalı."
-              ok=0
-              ;;
-          esac
-          case "$FTP_SECURITY" in
-            strict|loose) ;;
-            *)
-              echo "::error::FTP_SECURITY geçersiz. İzin verilen: strict, loose."
-              ok=0
-              ;;
-          esac
-          [ "$ok" -eq 1 ] || exit 1
-          echo "FTP_REMOTE_DIR configured=yes length=${#FTP_REMOTE_DIR}"
-          echo "FTP connection mode: protocol=$FTP_PROTOCOL port=$FTP_PORT security=$FTP_SECURITY"
-          echo "Deploy source: ./dist/ | dangerous-clean-slate: false"
-
-      - name: FTP sync dist/
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          server-dir: ${{ env.FTP_REMOTE_DIR }}
-          local-dir: ./dist/
-          protocol: ${{ env.FTP_PROTOCOL }}
-          port: ${{ env.FTP_PORT }}
-          security: ${{ env.FTP_SECURITY }}
-          timeout: 60000
-          state-name: .ftp-deploy-sync-state-kadirabi.json
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/.DS_Store

@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 /**
- * Production artifact + workflow invariants for /kadirabi/ deployment.
- * Fail-closed: exits non-zero if dist or deploy owner is not ready.
+ * Deploy architecture + artifact invariants for /kadirabi/.
+ * Fail-closed: exits non-zero if owners or dist are not production-ready.
+ *
+ * Canonical production owner: cPanel Git Version Control + .cpanel.yml
+ * GitHub Actions: CI validation only (no production mutation).
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
 const DIST = join(ROOT, 'dist')
+const CPANEL = join(ROOT, '.cpanel.yml')
 const WORKFLOW = join(ROOT, '.github', 'workflows', 'deploy-kadirabi.yml')
+const VITE_CONFIG = join(ROOT, 'vite.config.ts')
 const BASE = '/kadirabi/'
+const DEPLOYPATH = '/home/karmotor/public_html/kadirabi'
 const errors = []
 
 function fail(msg) {
@@ -23,14 +29,15 @@ function assertExists(rel, label = rel) {
 assertExists('dist', 'dist/')
 assertExists('dist/index.html', 'dist/index.html')
 assertExists('dist/.htaccess', 'dist/.htaccess')
-assertExists('.github/workflows/deploy-kadirabi.yml', 'deploy workflow')
+assertExists('.cpanel.yml', '.cpanel.yml')
+assertExists('.github/workflows/deploy-kadirabi.yml', 'CI workflow')
+assertExists('vite.config.ts', 'vite.config.ts')
 
 const assetsDir = join(DIST, 'assets')
 if (!existsSync(assetsDir) || !statSync(assetsDir).isDirectory()) {
   fail('Missing: dist/assets/')
-} else {
-  const assets = readdirSync(assetsDir)
-  if (assets.length === 0) fail('dist/assets/ is empty')
+} else if (readdirSync(assetsDir).length === 0) {
+  fail('dist/assets/ is empty')
 }
 
 if (existsSync(join(DIST, 'index.html'))) {
@@ -40,13 +47,13 @@ if (existsSync(join(DIST, 'index.html'))) {
     fail(`index.html must reference ${BASE}assets/...`)
   }
 
-  const rootAssetHits = html.match(/(?:src|href)=["']\/assets\//g)
-  if (rootAssetHits) {
+  if (html.match(/(?:src|href)=["']\/assets\//g)) {
     fail('index.html contains root /assets/ references (expected /kadirabi/assets/)')
   }
 
-  const doubleBase = html.includes(`${BASE}kadirabi/`) || html.includes('/kadirabi/kadirabi/')
-  if (doubleBase) fail('Double base path detected (/kadirabi/kadirabi/)')
+  if (html.includes(`${BASE}kadirabi/`) || html.includes('/kadirabi/kadirabi/')) {
+    fail('Double base path detected (/kadirabi/kadirabi/)')
+  }
 }
 
 if (existsSync(join(DIST, '.htaccess'))) {
@@ -59,49 +66,83 @@ if (existsSync(join(DIST, '.htaccess'))) {
   }
 }
 
+if (existsSync(VITE_CONFIG)) {
+  const vite = readFileSync(VITE_CONFIG, 'utf8')
+  const hasLiteralBase =
+    vite.includes("base: '/kadirabi/'") || vite.includes('base: "/kadirabi/"')
+  const hasConstBase =
+    /PRODUCTION_BASE\s*=\s*['"]\/kadirabi\/['"]/.test(vite) && /base:\s*PRODUCTION_BASE/.test(vite)
+  if (!hasLiteralBase && !hasConstBase) {
+    fail("vite.config.ts must set base to '/kadirabi/'")
+  }
+}
+
+if (existsSync(CPANEL)) {
+  const cpanel = readFileSync(CPANEL, 'utf8')
+
+  if (!cpanel.includes(`DEPLOYPATH=${DEPLOYPATH}`)) {
+    fail(`.cpanel.yml must set DEPLOYPATH=${DEPLOYPATH}`)
+  }
+
+  if (!cpanel.includes(`"$DEPLOYPATH" = "${DEPLOYPATH}"`)) {
+    fail(`.cpanel.yml must assert exact DEPLOYPATH ${DEPLOYPATH}`)
+  }
+
+  if (!/\/bin\/cp\s+-a\s+dist\/\.\s+"\$DEPLOYPATH\/"/.test(cpanel)) {
+    fail('.cpanel.yml must copy ONLY dist/. into $DEPLOYPATH/')
+  }
+
+  if (/\/bin\/cp\s+-a\s+\.\s+"\$DEPLOYPATH/.test(cpanel) || /cp\s+-a\s+\.\s+/.test(cpanel)) {
+    fail('.cpanel.yml must not copy repository root to DEPLOYPATH')
+  }
+
+  if (!cpanel.includes('command -v node') || !cpanel.includes('command -v npm')) {
+    fail('.cpanel.yml must require node and npm before production mutation')
+  }
+
+  if (!cpanel.includes('npm ci') || !cpanel.includes('npm test') || !cpanel.includes('npm run build')) {
+    fail('.cpanel.yml must run npm ci / test / build before copy')
+  }
+
+  if (!cpanel.includes('npm run verify:deploy')) {
+    fail('.cpanel.yml must run verify:deploy before copy')
+  }
+
+  if (/rm\s+-rf|rsync\s+.*--delete|find\s+.*-delete/.test(cpanel)) {
+    fail('.cpanel.yml must not use destructive delete/sync commands')
+  }
+
+  if (/public_html(?!\/kadirabi)/.test(cpanel.replaceAll(DEPLOYPATH, ''))) {
+    // After removing exact DEPLOYPATH occurrences, residual public_html refs are suspicious
+    const stripped = cpanel.split(DEPLOYPATH).join('')
+    if (/\/home\/karmotor\/public_html(?!\/kadirabi)/.test(stripped) || /public_html\s*$/m.test(stripped)) {
+      fail('.cpanel.yml must not target public_html root or non-kadirabi paths')
+    }
+  }
+}
+
 if (existsSync(WORKFLOW)) {
   const wf = readFileSync(WORKFLOW, 'utf8')
 
-  if (!/local-dir:\s*\.\/dist\//.test(wf)) {
-    fail('workflow local-dir must be ./dist/')
+  if (/FTP-Deploy-Action|SamKirkland\/FTP-Deploy-Action/.test(wf)) {
+    fail('GitHub Actions must not contain FTP-Deploy-Action (CI-only)')
   }
 
-  if (!/FTP_REMOTE_DIR:\s*\$\{\{\s*secrets\.FTP_REMOTE_DIR\s*\|\|\s*vars\.FTP_REMOTE_DIR\s*\}\}/.test(wf)) {
-    fail('workflow must resolve FTP_REMOTE_DIR from secrets.FTP_REMOTE_DIR || vars.FTP_REMOTE_DIR')
+  if (/FTP_SERVER|FTP_USERNAME|FTP_PASSWORD|FTP_REMOTE_DIR|server-dir:|local-dir:/.test(wf)) {
+    fail('GitHub Actions must not contain FTP deploy configuration')
   }
 
-  if (!/server-dir:\s*\$\{\{\s*env\.FTP_REMOTE_DIR\s*\}\}/.test(wf)) {
-    fail('workflow server-dir must use ${{ env.FTP_REMOTE_DIR }}')
+  if (!/npm (ci|test)/.test(wf) || !wf.includes('npm run typecheck') || !wf.includes('npm run build')) {
+    fail('CI workflow must run npm ci, test, typecheck, build')
   }
 
-  if (/\/public_html\/kadirabi\//.test(wf)) {
-    fail('workflow must not hardcode /public_html/kadirabi/')
+  if (!wf.includes('npm run verify:deploy')) {
+    fail('CI workflow must run verify:deploy')
   }
 
-  if (/server-dir:\s*['"]?\/?public_html\//.test(wf)) {
-    fail('workflow must not hardcode a public_html server-dir')
-  }
-
-  if (!/dangerous-clean-slate:\s*false/.test(wf)) {
-    fail('workflow must set dangerous-clean-slate: false')
-  }
-
-  if (!/if:\s*github\.event_name\s*==\s*'workflow_dispatch'/.test(wf)) {
-    fail('FTP production deploy job must require workflow_dispatch (manual gate)')
-  }
-
-  // Fail closed: FTP action must live under a job gated by workflow_dispatch,
-  // not under an always-on push job.
-  const deployJobMatch = wf.match(
-    /deploy:\s*\n(?:[ \t]+.+\n)*?[ \t]+if:\s*github\.event_name\s*==\s*'workflow_dispatch'[\s\S]*?FTP-Deploy-Action/,
-  )
-  if (!deployJobMatch) {
-    fail('FTP-Deploy-Action must run only in the workflow_dispatch-gated deploy job')
-  }
-
-  // Build/test must precede deploy via needs: validate
-  if (!/needs:\s*validate/.test(wf)) {
-    fail('deploy job must need validate so build/test failure cannot open FTP upload')
+  // Production mutation markers must stay out of Actions
+  if (/public_html\/kadirabi|\/home\/karmotor\/public_html/.test(wf)) {
+    fail('CI workflow must not reference production filesystem paths')
   }
 }
 
@@ -114,6 +155,7 @@ if (errors.length) {
 console.log('verify:deploy PASS')
 console.log(` PRODUCTION_BASE_PATH = ${BASE}`)
 console.log(' BUILD_OUTPUT = dist/')
-console.log(' FTP_REMOTE_DIR = RUNTIME_CONFIGURED (secret|variable)')
-console.log(' DEPLOY_TRIGGER = workflow_dispatch')
+console.log(` CPANEL_DEPLOYPATH = ${DEPLOYPATH}`)
+console.log(' DEPLOY_OWNER = CPANEL_GIT')
+console.log(' GITHUB_ACTIONS_ROLE = CI_ONLY')
 console.log(' APACHE_FALLBACK = READY')
