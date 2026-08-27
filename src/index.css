@@ -423,6 +423,76 @@ th {
   gap: 0.85rem;
 }
 
+.dashboard-work {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.dashboard-work-actions {
+  justify-content: flex-end;
+}
+
+.btn-quiet {
+  font-size: 0.88rem;
+  opacity: 0.88;
+  padding: 0.4rem 0.7rem;
+  min-height: 2.5rem;
+}
+
+.payment-add-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 11rem) auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin-bottom: 1rem;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.payment-add-form .field {
+  min-width: 0;
+}
+
+.payment-add-submit {
+  min-height: 2.75rem;
+  white-space: nowrap;
+}
+
+.payment-detail-prompt {
+  margin-bottom: 1rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--accent-soft);
+  min-width: 0;
+}
+
+.payment-detail-prompt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.payment-detail-prompt-row p {
+  margin: 0;
+}
+
+.payment-detail-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.payment-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .field {
   display: grid;
   gap: 0.35rem;
@@ -615,6 +685,29 @@ th {
 
   .page-actions .btn-primary {
     grid-column: 1 / -1;
+  }
+
+  .dashboard-work-actions {
+    width: 100%;
+  }
+
+  .payment-add-form {
+    grid-template-columns: 1fr;
+  }
+
+  .payment-add-submit {
+    width: 100%;
+  }
+
+  .payment-detail-prompt-row,
+  .payment-detail-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .payment-detail-actions .btn {
+    width: 100%;
+    min-height: 2.75rem;
   }
 
   .page-asof-controls {

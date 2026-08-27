@@ -23,15 +23,18 @@ export function SalePage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const [payOpen, setPayOpen] = useState(false)
   const [editPay, setEditPay] = useState<Payment | null>(null)
   const [editInst, setEditInst] = useState<Installment | null>(null)
   const [deleteSaleOpen, setDeleteSaleOpen] = useState(false)
   const [rateDraft, setRateDraft] = useState('')
 
-  const [payDate, setPayDate] = useState('')
+  const [payDate, setPayDate] = useState(asOfDate)
   const [payAmount, setPayAmount] = useState('')
   const [payNote, setPayNote] = useState('')
+  const [payFieldError, setPayFieldError] = useState<string | null>(null)
+  const [detailPaymentId, setDetailPaymentId] = useState<string | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [detailNote, setDetailNote] = useState('')
 
   const [instDate, setInstDate] = useState('')
   const [instAmount, setInstAmount] = useState('')
@@ -62,6 +65,12 @@ export function SalePage() {
   useEffect(() => {
     void reload()
   }, [reload])
+
+  useEffect(() => {
+    if (!editPay && !payAmount.trim()) {
+      setPayDate(asOfDate)
+    }
+  }, [asOfDate, editPay, payAmount])
 
   const allocationText = useMemo(() => {
     const map = new Map<string, string[]>()
@@ -94,32 +103,66 @@ export function SalePage() {
     }
   }
 
+  function focusPaymentAmount() {
+    setPayDate((prev) => prev || asOfDate)
+    const el = document.getElementById('pay-amount')
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el?.focus()
+  }
+
   async function handleAddPayment(e: React.FormEvent) {
     e.preventDefault()
-    if (!sale) return
+    if (!sale || busy) return
     setBusy(true)
     setError(null)
+    setPayFieldError(null)
     try {
       if (!isValidIsoDate(payDate)) throw new Error('Geçerli ödeme tarihi girin.')
       const amount = parseMoneyInput(payAmount)
       if (!amount || !(Number(amount) > 0)) throw new Error('Ödeme tutarı geçersiz.')
-      await repo.createPayment({
+      const created = await repo.createPayment({
         saleId: sale.id,
         paymentDate: payDate,
         amount,
-        note: payNote,
       })
-      setPayOpen(false)
-      setPayDate('')
       setPayAmount('')
-      setPayNote('')
+      setPayDate(asOfDate)
+      setDetailPaymentId(created.id)
+      setDetailOpen(false)
+      setDetailNote('')
       await refresh()
       await reload()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ödeme eklenemedi.')
+      const message = err instanceof Error ? err.message : 'Ödeme eklenemedi.'
+      setPayFieldError(message)
     } finally {
       setBusy(false)
     }
+  }
+
+  async function handleSavePaymentDetail(e: React.FormEvent) {
+    e.preventDefault()
+    if (!detailPaymentId || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await repo.updatePayment(detailPaymentId, { note: detailNote })
+      setDetailPaymentId(null)
+      setDetailOpen(false)
+      setDetailNote('')
+      await refresh()
+      await reload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Açıklama kaydedilemedi.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function dismissPaymentDetail() {
+    setDetailPaymentId(null)
+    setDetailOpen(false)
+    setDetailNote('')
   }
 
   async function handleEditPayment(e: React.FormEvent) {
@@ -137,6 +180,9 @@ export function SalePage() {
         note: payNote,
       })
       setEditPay(null)
+      setPayDate(asOfDate)
+      setPayAmount('')
+      setPayNote('')
       await refresh()
       await reload()
     } catch (err) {
@@ -222,16 +268,7 @@ export function SalePage() {
             <button type="button" className="btn btn-danger" onClick={() => setDeleteSaleOpen(true)}>
               Satışı Sil
             </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                setPayDate(asOfDate)
-                setPayAmount('')
-                setPayNote('')
-                setPayOpen(true)
-              }}
-            >
+            <button type="button" className="btn btn-primary" onClick={focusPaymentAmount}>
               Ödeme Ekle
             </button>
           </>
@@ -373,10 +410,78 @@ export function SalePage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="payment-add">
         <div className="panel-toolbar">
           <h2>Ödeme Hareketleri</h2>
         </div>
+
+        <form id="add-payment-form" className="payment-add-form" onSubmit={handleAddPayment} noValidate>
+          <Field label="Tutar" htmlFor="pay-amount" error={payFieldError ?? undefined}>
+            <input
+              id="pay-amount"
+              value={payAmount}
+              onChange={(e) => {
+                setPayAmount(e.target.value)
+                if (payFieldError) setPayFieldError(null)
+              }}
+              inputMode="decimal"
+              autoComplete="off"
+              aria-invalid={payFieldError ? true : undefined}
+              aria-describedby={payFieldError ? 'pay-amount-error' : undefined}
+              required
+            />
+          </Field>
+          <Field label="Tarih" htmlFor="pay-date">
+            <input
+              id="pay-date"
+              type="date"
+              value={payDate}
+              onChange={(e) => setPayDate(e.target.value)}
+              required
+            />
+          </Field>
+          <button type="submit" className="btn btn-primary payment-add-submit" disabled={busy}>
+            + Ekle
+          </button>
+        </form>
+
+        {detailPaymentId ? (
+          <div className="payment-detail-prompt" role="region" aria-label="Ödeme detayı">
+            {!detailOpen ? (
+              <div className="payment-detail-prompt-row">
+                <p>Detay eklemek ister misiniz?</p>
+                <div className="payment-detail-actions">
+                  <button type="button" className="btn btn-secondary" onClick={() => setDetailOpen(true)}>
+                    Evet
+                  </button>
+                  <button type="button" className="btn btn-ghost" onClick={dismissPaymentDetail}>
+                    Hayır
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form className="payment-detail-form" onSubmit={handleSavePaymentDetail}>
+                <Field label="Açıklama" htmlFor="pay-detail-note">
+                  <input
+                    id="pay-detail-note"
+                    value={detailNote}
+                    onChange={(e) => setDetailNote(e.target.value)}
+                    autoFocus
+                  />
+                </Field>
+                <div className="payment-detail-actions">
+                  <button type="button" className="btn btn-secondary" onClick={dismissPaymentDetail}>
+                    Atla
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={busy}>
+                    Detayı Kaydet
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        ) : null}
+
         {payments.length === 0 ? (
           <p className="muted">Henüz ödeme yok.</p>
         ) : (
@@ -398,8 +503,8 @@ export function SalePage() {
                     <td className="num">
                       <Money value={p.amount} />
                     </td>
-                    <td>{p.note || '—'}</td>
-                    <td>{(allocationText.get(p.id) ?? []).join(' · ') || '—'}</td>
+                    <td className="muted">{p.note || '—'}</td>
+                    <td className="muted">{(allocationText.get(p.id) ?? []).join(' · ') || '—'}</td>
                     <td className="row-actions">
                       <button
                         type="button"
@@ -429,42 +534,27 @@ export function SalePage() {
         )}
       </section>
 
-      {payOpen ? (
-        <Modal
-          title="Ödeme Ekle"
-          onClose={() => setPayOpen(false)}
-          footer={
-            <>
-              <button type="button" className="btn btn-secondary" onClick={() => setPayOpen(false)}>
-                Vazgeç
-              </button>
-              <button type="submit" form="add-payment-form" className="btn btn-primary" disabled={busy}>
-                Kaydet
-              </button>
-            </>
-          }
-        >
-          <form id="add-payment-form" onSubmit={handleAddPayment} className="form-grid">
-            <Field label="Tarih" htmlFor="pay-date">
-              <input id="pay-date" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} required />
-            </Field>
-            <Field label="Tutar" htmlFor="pay-amount">
-              <input id="pay-amount" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} required />
-            </Field>
-            <Field label="Açıklama" htmlFor="pay-note">
-              <input id="pay-note" value={payNote} onChange={(e) => setPayNote(e.target.value)} />
-            </Field>
-          </form>
-        </Modal>
-      ) : null}
-
       {editPay ? (
         <Modal
           title="Ödeme Düzenle"
-          onClose={() => setEditPay(null)}
+          onClose={() => {
+            setEditPay(null)
+            setPayDate(asOfDate)
+            setPayAmount('')
+            setPayNote('')
+          }}
           footer={
             <>
-              <button type="button" className="btn btn-secondary" onClick={() => setEditPay(null)}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setEditPay(null)
+                  setPayDate(asOfDate)
+                  setPayAmount('')
+                  setPayNote('')
+                }}
+              >
                 Vazgeç
               </button>
               <button type="submit" form="edit-payment-form" className="btn btn-primary" disabled={busy}>

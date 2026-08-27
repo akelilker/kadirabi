@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { calculateReceivable } from '../domain/receivableCalculator'
 import { d, moneyZero } from '../domain/money'
-import { EmptyState, Field, KpiCard, Modal, Money, PageHeader } from '../components/ui'
+import { EmptyState, Field, KpiCard, Modal, Money } from '../components/ui'
 import * as repo from '../storage/repository'
-import { downloadJsonBackup, exportCustomerSummaryXlsx, type CustomerSummaryRow } from '../utils/export'
+import { exportCustomerSummaryXlsx, type CustomerSummaryRow } from '../utils/export'
 import { todayIstanbul } from '../domain/dates'
 
 type SortKey = 'name' | 'shortfall' | 'principal' | 'delay' | 'updated'
@@ -39,9 +39,6 @@ export function DashboardPage() {
     advanceCredit: '0.00',
   })
   const [showCustomerModal, setShowCustomerModal] = useState(false)
-  const [showImportModal, setShowImportModal] = useState(false)
-  const [importConfirm, setImportConfirm] = useState(false)
-  const [importFile, setImportFile] = useState<File | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -176,30 +173,6 @@ export function DashboardPage() {
     }
   }
 
-  async function handleBackup() {
-    const payload = await repo.exportBackup()
-    downloadJsonBackup(payload, `taksit-alacak-backup-${todayIstanbul()}.json`)
-  }
-
-  async function handleImport() {
-    if (!importFile || !importConfirm) return
-    setBusy(true)
-    setFormError(null)
-    try {
-      const text = await importFile.text()
-      const json: unknown = JSON.parse(text)
-      await repo.importBackupReplace(json)
-      setShowImportModal(false)
-      setImportFile(null)
-      setImportConfirm(false)
-      await refresh()
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'İçe aktarma başarısız.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
   function handleExportSummary() {
     const summary: CustomerSummaryRow[] = rows.map((r) => ({
       customerName: r.customerName,
@@ -222,24 +195,23 @@ export function DashboardPage() {
 
   return (
     <div className="page">
-      <PageHeader
-        actions={
-          <>
-            <button type="button" className="btn btn-secondary" onClick={() => void handleBackup()}>
-              Yedek Al
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={() => setShowImportModal(true)}>
-              Geri Yükle
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={handleExportSummary} disabled={rows.length === 0}>
-              Excel Özet
-            </button>
-            <button type="button" className="btn btn-primary" onClick={() => setShowCustomerModal(true)}>
-              Müşteri Ekle
-            </button>
-          </>
-        }
-      />
+      {error ? <div className="banner banner-error">{error}</div> : null}
+
+      <section className="kpi-grid" aria-label="Özet göstergeler">
+        <KpiCard label="Toplam Müşteri" value={customers.length} />
+        <KpiCard label="Aktif Satış" value={sales.length} />
+        <KpiCard label="Vadesi Gelen Ana Para" value={<Money value={totals.duePrincipal} />} />
+        <KpiCard label="Tahsil Edilen" value={<Money value={totals.receivedCash} />} />
+        <KpiCard label="Açık Ana Para" value={<Money value={totals.openDuePrincipal} />} tone="muted" />
+        <KpiCard label="Para Maliyeti" value={<Money value={totals.accruedCarryingCost} />} tone="muted" />
+        <KpiCard
+          label="Bugün İtibarıyla Ekonomik Eksik"
+          value={<Money value={totals.economicShortfall} emphasize />}
+          tone="danger"
+          hint="Açık ana para + oluşmuş para maliyeti"
+        />
+        <KpiCard label="Advance Credit" value={<Money value={totals.advanceCredit} />} />
+      </section>
 
       <div className="page-asof">
         <label htmlFor="dashboard-asof">Hesap tarihi</label>
@@ -261,114 +233,112 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {error ? <div className="banner banner-error">{error}</div> : null}
-
-      <section className="kpi-grid" aria-label="Özet göstergeler">
-        <KpiCard label="Toplam Müşteri" value={customers.length} />
-        <KpiCard label="Aktif Satış" value={sales.length} />
-        <KpiCard label="Vadesi Gelen Ana Para" value={<Money value={totals.duePrincipal} />} />
-        <KpiCard label="Tahsil Edilen" value={<Money value={totals.receivedCash} />} />
-        <KpiCard label="Açık Ana Para" value={<Money value={totals.openDuePrincipal} />} tone="muted" />
-        <KpiCard label="Para Maliyeti" value={<Money value={totals.accruedCarryingCost} />} tone="muted" />
-        <KpiCard
-          label="Bugün İtibarıyla Ekonomik Eksik"
-          value={<Money value={totals.economicShortfall} emphasize />}
-          tone="danger"
-          hint="Açık ana para + oluşmuş para maliyeti"
-        />
-        <KpiCard label="Advance Credit" value={<Money value={totals.advanceCredit} />} />
-      </section>
-
-      <section className="panel">
-        <div className="panel-toolbar">
-          <input
-            type="search"
-            placeholder="Müşteri veya satış ara…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Müşteri ara"
-          />
-          <label className="inline-label">
-            Sırala
-            <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
-              <option value="shortfall">Ekonomik eksik</option>
-              <option value="principal">Açık ana para</option>
-              <option value="delay">En uzun gecikme</option>
-              <option value="name">İsim</option>
-              <option value="updated">Son işlem</option>
-            </select>
-          </label>
+      <div className="dashboard-work">
+        <div className="page-actions dashboard-work-actions" aria-label="İşlemler">
+          <button
+            type="button"
+            className="btn btn-secondary btn-quiet"
+            onClick={handleExportSummary}
+            disabled={rows.length === 0}
+          >
+            Excel Özet
+          </button>
+          <button type="button" className="btn btn-primary" onClick={() => setShowCustomerModal(true)}>
+            Müşteri Ekle
+          </button>
         </div>
 
-        {customers.length === 0 ? (
-          <EmptyState
-            title="Henüz müşteri yok."
-            body="İlk müşteriyi ekleyin."
-            action={
-              <button type="button" className="btn btn-primary" onClick={() => setShowCustomerModal(true)}>
-                Müşteri Ekle
-              </button>
-            }
-          />
-        ) : !hasListContent ? (
-          <EmptyState title="Sonuç bulunamadı." body="Arama ölçütlerinizi değiştirin." />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Müşteri</th>
-                  <th>Satış</th>
-                  <th className="num">Açık Ana Para</th>
-                  <th className="num">Para Maliyeti</th>
-                  <th className="num">Ekonomik Eksik</th>
-                  <th className="num">Gecikme</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r) => (
-                  <tr key={r.saleId}>
-                    <td>
-                      <Link to={`/customers/${r.customerId}`}>{r.customerName}</Link>
-                    </td>
-                    <td>
-                      <Link to={`/sales/${r.saleId}`}>{r.saleTitle}</Link>
-                    </td>
-                    <td className="num">
-                      <Money value={r.openDuePrincipal} />
-                    </td>
-                    <td className="num">
-                      <Money value={r.accruedCarryingCost} />
-                    </td>
-                    <td className="num">
-                      <Money value={r.economicShortfall} emphasize />
-                    </td>
-                    <td className="num">{r.maxDelay} g</td>
-                  </tr>
-                ))}
-                {customersWithoutSales.map((c) => (
-                  <tr key={c.id}>
-                    <td>
-                      <Link to={`/customers/${c.id}`}>{c.name}</Link>
-                    </td>
-                    <td className="muted">Satış yok</td>
-                    <td className="num">
-                      <Money value="0.00" />
-                    </td>
-                    <td className="num">
-                      <Money value="0.00" />
-                    </td>
-                    <td className="num">
-                      <Money value="0.00" />
-                    </td>
-                    <td className="num">—</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <section className="panel">
+          <div className="panel-toolbar">
+            <input
+              type="search"
+              placeholder="Müşteri veya satış ara…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Müşteri ara"
+            />
+            <label className="inline-label">
+              Sırala
+              <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+                <option value="shortfall">Ekonomik eksik</option>
+                <option value="principal">Açık ana para</option>
+                <option value="delay">En uzun gecikme</option>
+                <option value="name">İsim</option>
+                <option value="updated">Son işlem</option>
+              </select>
+            </label>
           </div>
-        )}
-      </section>
+
+          {customers.length === 0 ? (
+            <EmptyState
+              title="Henüz müşteri yok."
+              body="İlk müşteriyi ekleyin."
+              action={
+                <button type="button" className="btn btn-primary" onClick={() => setShowCustomerModal(true)}>
+                  Müşteri Ekle
+                </button>
+              }
+            />
+          ) : !hasListContent ? (
+            <EmptyState title="Sonuç bulunamadı." body="Arama ölçütlerinizi değiştirin." />
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Müşteri</th>
+                    <th>Satış</th>
+                    <th className="num">Açık Ana Para</th>
+                    <th className="num">Para Maliyeti</th>
+                    <th className="num">Ekonomik Eksik</th>
+                    <th className="num">Gecikme</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((r) => (
+                    <tr key={r.saleId}>
+                      <td>
+                        <Link to={`/customers/${r.customerId}`}>{r.customerName}</Link>
+                      </td>
+                      <td>
+                        <Link to={`/sales/${r.saleId}`}>{r.saleTitle}</Link>
+                      </td>
+                      <td className="num">
+                        <Money value={r.openDuePrincipal} />
+                      </td>
+                      <td className="num">
+                        <Money value={r.accruedCarryingCost} />
+                      </td>
+                      <td className="num">
+                        <Money value={r.economicShortfall} emphasize />
+                      </td>
+                      <td className="num">{r.maxDelay} g</td>
+                    </tr>
+                  ))}
+                  {customersWithoutSales.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        <Link to={`/customers/${c.id}`}>{c.name}</Link>
+                      </td>
+                      <td className="muted">Satış yok</td>
+                      <td className="num">
+                        <Money value="0.00" />
+                      </td>
+                      <td className="num">
+                        <Money value="0.00" />
+                      </td>
+                      <td className="num">
+                        <Money value="0.00" />
+                      </td>
+                      <td className="num">—</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
 
       {showCustomerModal ? (
         <Modal
@@ -396,56 +366,6 @@ export function DashboardPage() {
               <textarea id="cus-note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} />
             </Field>
           </form>
-        </Modal>
-      ) : null}
-
-      {showImportModal ? (
-        <Modal
-          title="Yedekten Geri Yükle"
-          onClose={() => {
-            setShowImportModal(false)
-            setImportConfirm(false)
-            setImportFile(null)
-            setFormError(null)
-          }}
-          footer={
-            <>
-              <button type="button" className="btn btn-secondary" onClick={() => setShowImportModal(false)}>
-                Vazgeç
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                disabled={!importFile || !importConfirm || busy}
-                onClick={() => void handleImport()}
-              >
-                Mevcut Veriyi Değiştir
-              </button>
-            </>
-          }
-        >
-          <div className="form-grid">
-            <p className="warn-text">
-              Bu işlem mevcut tüm müşteri, satış, taksit ve ödeme kayıtlarını siler ve yedekteki veriyle değiştirir.
-            </p>
-            <Field label="Yedek JSON dosyası" htmlFor="import-file">
-              <input
-                id="import-file"
-                type="file"
-                accept="application/json,.json"
-                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
-              />
-            </Field>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={importConfirm}
-                onChange={(e) => setImportConfirm(e.target.checked)}
-              />
-              Mevcut veriyi değiştirmek istediğimi onaylıyorum.
-            </label>
-            {formError ? <p className="field-error">{formError}</p> : null}
-          </div>
         </Modal>
       ) : null}
     </div>

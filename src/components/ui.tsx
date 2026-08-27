@@ -114,11 +114,16 @@ export function Field({
   children: ReactNode
   error?: string
 }) {
+  const errorId = `${htmlFor}-error`
   return (
     <div className="field">
       <label htmlFor={htmlFor}>{label}</label>
       {children}
-      {error ? <span className="field-error">{error}</span> : null}
+      {error ? (
+        <span id={errorId} className="field-error" role="alert">
+          {error}
+        </span>
+      ) : null}
     </div>
   )
 }
