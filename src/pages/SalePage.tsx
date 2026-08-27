@@ -348,17 +348,19 @@ export function SalePage() {
 
       <section className="panel">
         <h2>Taksit Tablosu</h2>
-        <div className="table-wrap">
-          <table>
+        <div className="table-wrap installment-ledger-wrap">
+          <table className="installment-ledger" aria-label="Taksit planı">
             <thead>
               <tr>
                 <th>#</th>
                 <th>Vade</th>
-                <th className="num">Taksit</th>
-                <th className="num">Mahsup Edilen</th>
-                <th className="num">Açık</th>
-                <th>Ödeme Durumu</th>
-                <th>Son Ödeme</th>
+                <th className="num">Aylık Taksit</th>
+                <th className="num">Devreden</th>
+                <th className="num">Ödenmesi Gereken</th>
+                <th>Ödemeler</th>
+                <th className="num">Ödenen</th>
+                <th className="num">Kalan</th>
+                <th>Durum</th>
                 <th className="num">Gecikme</th>
                 <th className="num">Maliyet</th>
                 <th></th>
@@ -367,28 +369,48 @@ export function SalePage() {
             <tbody>
               {result.installmentResults.map((r) => (
                 <tr key={r.installmentId}>
-                  <td>{r.sequence}</td>
-                  <td>{formatDateTR(r.dueDate)}</td>
-                  <td className="num">
+                  <td data-label="#">{r.sequence}</td>
+                  <td data-label="Vade">{formatDateTR(r.dueDate)}</td>
+                  <td className="num" data-label="Aylık Taksit">
                     <Money value={r.amount} />
                   </td>
-                  <td className="num">
-                    <Money value={r.allocated} />
+                  <td className="num" data-label="Devreden">
+                    <Money value={r.carryIn} />
                   </td>
-                  <td className="num">
-                    <Money value={r.open} />
+                  <td className="num" data-label="Ödenmesi Gereken">
+                    <Money value={r.amountDue} />
                   </td>
-                  <td>
+                  <td className="payment-lines" data-label="Ödemeler">
+                    {r.periodPayments.length === 0 ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      <ul>
+                        {r.periodPayments.map((p) => (
+                          <li key={`${p.paymentId}-${p.paymentDate}-${p.amount}`}>
+                            {formatDateTR(p.paymentDate)} — <Money value={p.amount} />
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
+                  <td className="num" data-label="Ödenen">
+                    <Money value={r.periodPaid} />
+                  </td>
+                  <td className="num" data-label="Kalan">
+                    <Money value={r.carryOut} />
+                  </td>
+                  <td data-label="Durum">
                     <span className={`status status-${r.status}`}>
                       {INSTALLMENT_STATUS_LABELS[r.status]}
                     </span>
                   </td>
-                  <td>{r.lastPaymentDate ? formatDateTR(r.lastPaymentDate) : '—'}</td>
-                  <td className="num">{r.delayDays}</td>
-                  <td className="num">
+                  <td className="num" data-label="Gecikme">
+                    {r.delayDays}
+                  </td>
+                  <td className="num" data-label="Maliyet">
                     <Money value={r.cost} />
                   </td>
-                  <td>
+                  <td data-label="">
                     <button
                       type="button"
                       className="btn btn-ghost"

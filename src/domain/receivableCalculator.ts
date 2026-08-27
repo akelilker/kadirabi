@@ -168,6 +168,21 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
   type CreditLot = { date: IsoDate; amount: Decimal; paymentId: string }
   const creditLots: CreditLot[] = []
 
+  type PeriodAcc = {
+    installmentId: string
+    sequence: number
+    dueDate: IsoDate
+    amount: Decimal
+    carryIn: Decimal
+    amountDue: Decimal
+    periodPaid: Decimal
+    periodPayments: Array<{ paymentId: string; paymentDate: IsoDate; amount: Decimal }>
+    /** Exclusive end of period (next due or asOf). */
+    periodEnd: IsoDate
+  }
+  const periodById = new Map<string, PeriodAcc>()
+  let activePeriodId: string | null = null
+
   const totalAdvanceCredit = () =>
     creditLots.reduce((sum, lot) => sum.plus(lot.amount), moneyZero())
 
@@ -219,6 +234,18 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
         installmentSequence: target.sequence,
         amount: moneyToString(apply),
       })
+      // Advance-credit application on due day counts toward the new period's paid.
+      if (activePeriodId) {
+        const period = periodById.get(activePeriodId)
+        if (period && isPositive(apply)) {
+          period.periodPaid = period.periodPaid.plus(apply)
+          period.periodPayments.push({
+            paymentId: lot.paymentId,
+            paymentDate: lot.date,
+            amount: apply,
+          })
+        }
+      }
       if (!isPositive(lot.amount)) {
         creditLots.shift()
       }
@@ -233,6 +260,25 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
     accrueTo(event.date)
 
     if (event.kind === 'due') {
+      if (activePeriodId) {
+        const prev = periodById.get(activePeriodId)
+        if (prev) prev.periodEnd = event.date
+      }
+      const carryIn = openDuePrincipal
+      const amountDue = carryIn.plus(event.amount)
+      periodById.set(event.installmentId, {
+        installmentId: event.installmentId,
+        sequence: event.sequence,
+        dueDate: event.date,
+        amount: event.amount,
+        carryIn,
+        amountDue,
+        periodPaid: moneyZero(),
+        periodPayments: [],
+        periodEnd: asOfDate,
+      })
+      activePeriodId = event.installmentId
+
       openQueue.push({
         installmentId: event.installmentId,
         sequence: event.sequence,
@@ -249,6 +295,7 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
     // payment
     receivedCash = receivedCash.plus(event.amount)
     let remaining = event.amount
+    let appliedThisPayment = moneyZero()
 
     while (isPositive(remaining) && openQueue.length > 0) {
       const target = openQueue[0]!
@@ -257,6 +304,7 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
       target.allocated = target.allocated.plus(apply)
       remaining = remaining.minus(apply)
       openDuePrincipal = openDuePrincipal.minus(apply)
+      appliedThisPayment = appliedThisPayment.plus(apply)
       target.lastPaymentDate = event.date
       allocations.push({
         paymentId: event.paymentId,
@@ -267,6 +315,18 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
       if (!isPositive(target.amount.minus(target.allocated))) {
         closedMap.set(target.installmentId, target)
         openQueue.shift()
+      }
+    }
+
+    if (activePeriodId && isPositive(appliedThisPayment)) {
+      const period = periodById.get(activePeriodId)
+      if (period) {
+        period.periodPaid = period.periodPaid.plus(appliedThisPayment)
+        period.periodPayments.push({
+          paymentId: event.paymentId,
+          paymentDate: event.date,
+          amount: appliedThisPayment,
+        })
       }
     }
 
@@ -287,6 +347,11 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
     cursorDate = asOfDate
   }
 
+  if (activePeriodId) {
+    const last = periodById.get(activePeriodId)
+    if (last) last.periodEnd = asOfDate
+  }
+
   const advanceCredit = totalAdvanceCredit()
 
   // Snapshot open/closed for installment results
@@ -298,12 +363,20 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
   let futurePrincipal = moneyZero()
   const installmentResults: InstallmentResult[] = []
 
-  const installmentCost = computePerInstallmentCosts(
-    installments,
-    payments,
-    monthlyCostRatePct,
-    asOfDate,
-  )
+  // carryOut at period end = open principal immediately before next due
+  // (= carryIn of next period). For the last due period, use current openDuePrincipal.
+  const dueInstallments = installments.filter((i) => compareIsoDates(i.dueDate, asOfDate) <= 0)
+  const carryOutById = new Map<string, Decimal>()
+  for (let i = 0; i < dueInstallments.length; i++) {
+    const cur = dueInstallments[i]!
+    const next = dueInstallments[i + 1]
+    if (next) {
+      const nextPeriod = periodById.get(next.id)
+      carryOutById.set(cur.id, nextPeriod?.carryIn ?? moneyZero())
+    } else {
+      carryOutById.set(cur.id, openDuePrincipal)
+    }
+  }
 
   for (const inst of installments) {
     const amount = d(inst.amount)
@@ -318,12 +391,29 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
       duePrincipal = duePrincipal.plus(amount)
     }
 
+    const period = periodById.get(inst.id)
+    const carryIn = period?.carryIn ?? moneyZero()
+    const amountDue = period?.amountDue ?? amount
+    const periodPaid = period?.periodPaid ?? moneyZero()
+    const carryOut = dueInFuture ? moneyZero() : (carryOutById.get(inst.id) ?? moneyZero())
+    const periodPayments = (period?.periodPayments ?? []).map((p) => ({
+      paymentId: p.paymentId,
+      paymentDate: p.paymentDate,
+      amount: moneyToString(p.amount),
+    }))
+    const periodEnd = period?.periodEnd ?? asOfDate
+
     let delayDays = 0
-    if (!dueInFuture && isPositive(open)) {
-      delayDays = Math.max(0, daysBetween(inst.dueDate, asOfDate))
-    } else if (!dueInFuture && state?.lastPaymentDate) {
-      delayDays = Math.max(0, daysBetween(inst.dueDate, state.lastPaymentDate))
+    if (!dueInFuture) {
+      const firstPay = periodPayments[0]?.paymentDate
+      if (firstPay) {
+        delayDays = Math.max(0, daysBetween(inst.dueDate, firstPay))
+      } else if (isPositive(carryOut) || isPositive(open)) {
+        delayDays = Math.max(0, daysBetween(inst.dueDate, periodEnd))
+      }
     }
+
+    const periodCost = sumCostSegmentsInWindow(costSegments, inst.dueDate, periodEnd)
 
     installmentResults.push({
       installmentId: inst.id,
@@ -332,6 +422,11 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
       amount: moneyToString(amount),
       allocated: moneyToString(allocated),
       open: moneyToString(open),
+      carryIn: moneyToString(carryIn),
+      amountDue: moneyToString(amountDue),
+      periodPaid: moneyToString(periodPaid),
+      carryOut: moneyToString(carryOut),
+      periodPayments,
       status: buildStatus({
         dueDate: inst.dueDate,
         asOfDate,
@@ -341,7 +436,7 @@ export function calculateReceivable(input: CalculateReceivableInput): Calculatio
       }),
       lastPaymentDate: state?.lastPaymentDate ?? null,
       delayDays,
-      cost: moneyToString(installmentCost.get(inst.id) ?? moneyZero()),
+      cost: moneyToString(periodCost),
     })
   }
 
@@ -378,127 +473,19 @@ function roundHalfUp2(value: Decimal): Decimal {
   return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
 }
 
-/**
- * Attribute carrying cost per installment by simulating each installment's
- * outstanding balance over time (FIFO allocations already applied globally).
- * Used for table display only; total cost comes from portfolio-level segments.
- */
-function computePerInstallmentCosts(
-  installments: Installment[],
-  payments: Payment[],
-  monthlyCostRatePct: number,
-  asOfDate: IsoDate,
-): Map<string, Decimal> {
-  // Run a lightweight per-installment remaining tracker using global FIFO allocations
-  const calc = calculateReceivableCoreWithoutPerCost(installments, payments, monthlyCostRatePct, asOfDate)
-  return calc
-}
-
-function calculateReceivableCoreWithoutPerCost(
-  installments: Installment[],
-  payments: Payment[],
-  monthlyCostRatePct: number,
-  asOfDate: IsoDate,
-): Map<string, Decimal> {
-  const costs = new Map<string, Decimal>()
-  for (const inst of installments) costs.set(inst.id, moneyZero())
-
-  const sortedInst = [...installments].sort((a, b) => a.sequence - b.sequence)
-  const sortedPay = [...payments]
-    .filter((p) => compareIsoDates(p.paymentDate, asOfDate) <= 0 && isPositive(d(p.amount)))
-    .sort((a, b) => {
-      const c = compareIsoDates(a.paymentDate, b.paymentDate)
-      if (c !== 0) return c
-      return a.createdAt.localeCompare(b.createdAt)
-    })
-
-  type Track = {
-    id: string
-    dueDate: IsoDate
-    remaining: Decimal
-    active: boolean
-  }
-
-  const tracks: Track[] = sortedInst.map((i) => ({
-    id: i.id,
-    dueDate: i.dueDate,
-    remaining: d(i.amount),
-    active: false,
-  }))
-
-  type Ev =
-    | { kind: 'due'; date: IsoDate; id: string }
-    | { kind: 'pay'; date: IsoDate; amount: Decimal }
-
-  const events: Ev[] = []
-  for (const t of tracks) {
-    if (compareIsoDates(t.dueDate, asOfDate) <= 0) {
-      events.push({ kind: 'due', date: t.dueDate, id: t.id })
+/** Sum cost segments whose startDate is in [windowStart, windowEnd). */
+function sumCostSegmentsInWindow(
+  segments: CostSegment[],
+  windowStart: IsoDate,
+  windowEnd: IsoDate,
+): Decimal {
+  let total = moneyZero()
+  for (const s of segments) {
+    if (compareIsoDates(s.startDate, windowStart) >= 0 && compareIsoDates(s.startDate, windowEnd) < 0) {
+      total = total.plus(d(s.cost))
     }
   }
-  for (const p of sortedPay) {
-    events.push({ kind: 'pay', date: p.paymentDate, amount: d(p.amount) })
-  }
-  events.sort((a, b) => {
-    const c = compareIsoDates(a.date, b.date)
-    if (c !== 0) return c
-    if (a.kind !== b.kind) return a.kind === 'due' ? -1 : 1
-    return 0
-  })
-
-  let credit = moneyZero()
-  let cursor: IsoDate | null = null
-  const byId = new Map(tracks.map((t) => [t.id, t]))
-
-  const openPrincipalOf = (t: Track) => (t.active ? t.remaining : moneyZero())
-
-  const accrue = (to: IsoDate) => {
-    if (cursor === null) {
-      cursor = to
-      return
-    }
-    const days = daysBetween(cursor, to)
-    if (days > 0) {
-      for (const t of tracks) {
-        const open = openPrincipalOf(t)
-        if (isPositive(open)) {
-          const cost = calculateCarryingCost(open, monthlyCostRatePct, days)
-          costs.set(t.id, (costs.get(t.id) ?? moneyZero()).plus(cost))
-        }
-      }
-    }
-    cursor = to
-  }
-
-  const applyCredit = () => {
-    for (const t of tracks) {
-      if (!t.active || !isPositive(t.remaining) || !isPositive(credit)) continue
-      const apply = Decimal.min(credit, t.remaining)
-      t.remaining = t.remaining.minus(apply)
-      credit = credit.minus(apply)
-    }
-  }
-
-  for (const ev of events) {
-    accrue(ev.date)
-    if (ev.kind === 'due') {
-      const t = byId.get(ev.id)!
-      t.active = true
-      applyCredit()
-    } else {
-      let rem = ev.amount
-      for (const t of tracks) {
-        if (!t.active || !isPositive(t.remaining) || !isPositive(rem)) continue
-        const apply = Decimal.min(rem, t.remaining)
-        t.remaining = t.remaining.minus(apply)
-        rem = rem.minus(apply)
-      }
-      if (isPositive(rem)) credit = credit.plus(rem)
-    }
-  }
-  if (cursor !== null) accrue(asOfDate)
-
-  return costs
+  return total
 }
 
 export function sumCostSegments(segments: CostSegment[]): string {

@@ -76,20 +76,48 @@ export interface PaymentAllocation {
   amount: string
 }
 
+/** Payment lines that reduced open balance inside an installment period. */
+export interface PeriodPaymentLine {
+  paymentId: string
+  paymentDate: IsoDate
+  /** Decimal string */
+  amount: string
+}
+
 export interface InstallmentResult {
   installmentId: string
   sequence: number
   dueDate: IsoDate
-  /** Decimal string */
+  /** Decimal string — scheduled installment (cari taksit) */
   amount: string
-  /** Decimal string */
+  /** Decimal string — FIFO allocated to this installment (lifetime) */
   allocated: string
-  /** Decimal string */
+  /** Decimal string — remaining open on this installment (FIFO) */
   open: string
+  /**
+   * Open principal carried in from prior periods, immediately before this due.
+   * Positive open debt only — not advance credit.
+   */
+  carryIn: string
+  /** amount + carryIn at due instant */
+  amountDue: string
+  /** Payments applied to portfolio open during this period (due → next due / asOf) */
+  periodPaid: string
+  /** Open principal remaining at period end (before next installment is added) */
+  carryOut: string
+  /** Payments that hit open balance in this period window */
+  periodPayments: PeriodPaymentLine[]
   status: InstallmentStatus
   lastPaymentDate: IsoDate | null
+  /**
+   * Period delay: days from due to first in-period payment (or to period end if unpaid).
+   * Does not collapse partial-payment history into the final settlement date.
+   */
   delayDays: number
-  /** Decimal string — carrying cost attributable to this installment timeline share (informational) */
+  /**
+   * Carrying cost accrued on portfolio open during this period window
+   * (sum of cost segments with start in [due, periodEnd)).
+   */
   cost: string
 }
 

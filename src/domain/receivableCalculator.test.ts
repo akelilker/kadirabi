@@ -309,3 +309,105 @@ describe('Test 13 — Delete payment recalculation', () => {
     expect(result.economicShortfall).toBe('10110.00')
   })
 })
+
+describe('Test 14 — Carry-forward ledger (7×10000 user fixture)', () => {
+  const dues = [
+    '2026-01-01',
+    '2026-02-01',
+    '2026-03-01',
+    '2026-04-01',
+    '2026-05-01',
+    '2026-06-01',
+    '2026-07-01',
+  ]
+  const installments = dues.map((due, i) => inst(`i${i + 1}`, i + 1, due, '10000'))
+  const payments = [
+    pay('p1', '2026-01-06', '8000'),
+    pay('p2', '2026-02-02', '10000'),
+    pay('p3', '2026-03-02', '5000'),
+    pay('p4', '2026-04-01', '10000'),
+    pay('p5', '2026-05-01', '10000'),
+    pay('p6', '2026-06-01', '10000'),
+    pay('p7', '2026-07-01', '10000'),
+  ]
+
+  it('builds period carry-in/out and keeps first delay segment at 5 days @ 10000', () => {
+    const result = calculateReceivable({
+      installments,
+      payments,
+      monthlyCostRatePct: 3,
+      asOfDate: '2026-07-01',
+    })
+
+    const r1 = result.installmentResults[0]!
+    expect(r1.amount).toBe('10000.00')
+    expect(r1.carryIn).toBe('0.00')
+    expect(r1.amountDue).toBe('10000.00')
+    expect(r1.periodPaid).toBe('8000.00')
+    expect(r1.carryOut).toBe('2000.00')
+    expect(r1.delayDays).toBe(5)
+    expect(r1.periodPayments).toEqual([
+      expect.objectContaining({ paymentDate: '2026-01-06', amount: '8000.00' }),
+    ])
+
+    const r2 = result.installmentResults[1]!
+    expect(r2.amount).toBe('10000.00')
+    expect(r2.carryIn).toBe('2000.00')
+    expect(r2.amountDue).toBe('12000.00')
+    expect(r2.periodPaid).toBe('10000.00')
+    expect(r2.carryOut).toBe('2000.00')
+
+    // Cost timeline: 01.01→06.01 principal 10000 for 5 days
+    expect(result.costSegments[0]).toMatchObject({
+      startDate: '2026-01-01',
+      endDate: '2026-01-06',
+      days: 5,
+      principal: '10000.00',
+      cost: '50.00',
+    })
+    // Remaining 2000 continues after 06.01 (until next event)
+    expect(result.costSegments[1]).toMatchObject({
+      startDate: '2026-01-06',
+      endDate: '2026-02-01',
+      principal: '2000.00',
+    })
+    expect(Number(result.costSegments[1]!.days)).toBe(daysBetween('2026-01-06', '2026-02-01'))
+
+    // Period 1 cost = segment0 + segment1 (both start in [01.01, 02.01))
+    expect(r1.cost).toBe(
+      moneyToString(d(result.costSegments[0]!.cost).plus(d(result.costSegments[1]!.cost))),
+    )
+
+    // No double-count: sum of period costs == portfolio accrued cost
+    const periodCostSum = result.installmentResults.reduce((s, r) => s.plus(d(r.cost)), d(0))
+    expect(moneyToString(periodCostSum)).toBe(result.accruedCarryingCost)
+  })
+
+  it('keeps multi-payment lines inside a single period', () => {
+    const result = calculateReceivable({
+      installments: [inst('i1', 1, '2026-01-01', '10000')],
+      payments: [
+        pay('p1', '2026-01-06', '3000'),
+        pay('p2', '2026-01-10', '5000'),
+        pay('p3', '2026-01-20', '2000'),
+      ],
+      monthlyCostRatePct: 3,
+      asOfDate: '2026-01-20',
+    })
+    const r1 = result.installmentResults[0]!
+    expect(r1.periodPayments.map((p) => `${p.paymentDate}:${p.amount}`)).toEqual([
+      '2026-01-06:3000.00',
+      '2026-01-10:5000.00',
+      '2026-01-20:2000.00',
+    ])
+    expect(r1.periodPaid).toBe('10000.00')
+    expect(r1.carryOut).toBe('0.00')
+    expect(result.costSegments).toHaveLength(3)
+    expect(result.costSegments[0]).toMatchObject({
+      startDate: '2026-01-01',
+      endDate: '2026-01-06',
+      days: 5,
+      principal: '10000.00',
+    })
+  })
+})
