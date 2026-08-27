@@ -11,7 +11,7 @@ import { todayIstanbul } from '../domain/dates'
 type SortKey = 'name' | 'shortfall' | 'principal' | 'delay' | 'updated'
 
 export function DashboardPage() {
-  const { customers, sales, loading, error, asOfDate, refresh } = useAppData()
+  const { customers, sales, loading, error, asOfDate, setAsOfDate, resetAsOfToToday, refresh } = useAppData()
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('shortfall')
   const [rows, setRows] = useState<
@@ -218,11 +218,11 @@ export function DashboardPage() {
     return <p className="muted">Yükleniyor…</p>
   }
 
+  const isAsOfToday = asOfDate === todayIstanbul()
+
   return (
     <div className="page">
       <PageHeader
-        title="Dashboard"
-        subtitle={`Hesap tarihi: ${asOfDate}`}
         actions={
           <>
             <button type="button" className="btn btn-secondary" onClick={() => void handleBackup()}>
@@ -240,6 +240,26 @@ export function DashboardPage() {
           </>
         }
       />
+
+      <div className="page-asof">
+        <label htmlFor="dashboard-asof">Hesap tarihi</label>
+        <div className="page-asof-controls">
+          <input
+            id="dashboard-asof"
+            type="date"
+            value={asOfDate}
+            onChange={(e) => setAsOfDate(e.target.value)}
+          />
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={resetAsOfToToday}
+            disabled={isAsOfToday}
+          >
+            Bugüne Getir
+          </button>
+        </div>
+      </div>
 
       {error ? <div className="banner banner-error">{error}</div> : null}
 

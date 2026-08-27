@@ -43,16 +43,18 @@ export function PageHeader({
   subtitle,
   actions,
 }: {
-  title: string
+  title?: string
   subtitle?: string
   actions?: ReactNode
 }) {
   return (
     <header className="page-header">
-      <div>
-        <h1>{title}</h1>
-        {subtitle ? <p className="page-subtitle">{subtitle}</p> : null}
-      </div>
+      {title || subtitle ? (
+        <div>
+          {title ? <h1>{title}</h1> : null}
+          {subtitle ? <p className="page-subtitle">{subtitle}</p> : null}
+        </div>
+      ) : null}
       {actions ? <div className="page-actions">{actions}</div> : null}
     </header>
   )
